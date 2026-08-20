@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+final class LookupUnavailableException extends RuntimeException
+{
+}
+
 final class WikipediaClient
 {
     public function searchPeople(string $name): array
@@ -10,7 +14,11 @@ final class WikipediaClient
             'https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=fr&type=item&limit=8&search=' . rawurlencode($name)
         );
 
-        if ($response === null || !isset($response['search']) || !is_array($response['search'])) {
+        if ($response === null) {
+            throw new LookupUnavailableException('Le service Wikipédia/Wikidata est indisponible pour le moment.');
+        }
+
+        if (!isset($response['search']) || !is_array($response['search'])) {
             return [];
         }
 

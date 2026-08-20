@@ -160,14 +160,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $result = importVisitors($_FILES['visitors_file']['tmp_name'], $repository, $wikipedia);
+                $message = sprintf(
+                    'Import terminé : %d ligne(s), %d visite(s) résolue(s), %d à compléter.',
+                    $result['total'],
+                    $result['resolved'],
+                    $result['pending']
+                );
+
+                if ($result['lookup_unavailable']) {
+                    $message .= ' Wikipédia/Wikidata était indisponible : les visites ont été importées sans enrichissement automatique.';
+                }
+
                 flash(
                     'success',
-                    sprintf(
-                        'Import terminé : %d ligne(s), %d visite(s) résolue(s), %d à compléter.',
-                        $result['total'],
-                        $result['resolved'],
-                        $result['pending']
-                    )
+                    $message
                 );
                 redirect('?page=preload');
                 break;
@@ -185,11 +191,20 @@ if ($page === 'preload' && isset($_GET['resolve'])) {
     $candidateVisit = $repository->getVisit((int) $_GET['resolve']);
 
     if ($candidateVisit !== null) {
-        $candidateSelection = [
-            'visit_id' => (int) $candidateVisit['id'],
-            'visitor_name' => (string) $candidateVisit['visitor_name'],
-            'candidates' => $wikipedia->searchPeople((string) $candidateVisit['visitor_name']),
-        ];
+        try {
+            $candidateSelection = [
+                'visit_id' => (int) $candidateVisit['id'],
+                'visitor_name' => (string) $candidateVisit['visitor_name'],
+                'candidates' => $wikipedia->searchPeople((string) $candidateVisit['visitor_name']),
+            ];
+        } catch (LookupUnavailableException $exception) {
+            $candidateSelection = [
+                'visit_id' => (int) $candidateVisit['id'],
+                'visitor_name' => (string) $candidateVisit['visitor_name'],
+                'candidates' => [],
+                'lookup_error' => $exception->getMessage(),
+            ];
+        }
     }
 }
 
@@ -440,7 +455,7 @@ ob_start();
                         <tr>
                             <td colspan="3">
                                 <?php if ($candidateSelection['candidates'] === []): ?>
-                                    <p>Aucune correspondance Wikipédia trouvée pour cette visite.</p>
+                                    <p><?= h((string) ($candidateSelection['lookup_error'] ?? 'Aucune correspondance Wikipédia trouvée pour cette visite.')) ?></p>
                                 <?php else: ?>
                                     <form method="post" class="stack">
                                         <input type="hidden" name="action" value="resolve_visit_person">
@@ -564,6 +579,7 @@ function importVisitors(string $path, Repository $repository, WikipediaClient $w
     $total = 0;
     $resolved = 0;
     $pending = 0;
+    $lookupUnavailable = false;
 
     foreach ($lines as $line) {
         $name = extractNameFromImportLine($line);
@@ -573,7 +589,15 @@ function importVisitors(string $path, Repository $repository, WikipediaClient $w
         }
 
         $total++;
-        $candidates = $wikipedia->searchPeople($name);
+        $candidates = [];
+
+        if (!$lookupUnavailable) {
+            try {
+                $candidates = $wikipedia->searchPeople($name);
+            } catch (LookupUnavailableException) {
+                $lookupUnavailable = true;
+            }
+        }
 
         if (count($candidates) === 1) {
             $personId = $repository->upsertPerson($candidates[0]);
@@ -590,6 +614,7 @@ function importVisitors(string $path, Repository $repository, WikipediaClient $w
         'total' => $total,
         'resolved' => $resolved,
         'pending' => $pending,
+        'lookup_unavailable' => $lookupUnavailable,
     ];
 }
 
