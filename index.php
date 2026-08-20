@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 session_start();
 
+if (!isset($_SESSION['csrf_token']) || !is_string($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 require __DIR__ . '/src/Database.php';
 require __DIR__ . '/src/Repository.php';
 require __DIR__ . '/src/WikipediaClient.php';
@@ -11,7 +15,7 @@ require __DIR__ . '/src/WikipediaClient.php';
 $storageDirectory = __DIR__ . '/var';
 
 if (!is_dir($storageDirectory)) {
-    mkdir($storageDirectory, 0777, true);
+    mkdir($storageDirectory, 0750, true);
 }
 
 $database = new Database(
@@ -32,6 +36,10 @@ $candidateVisit = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $action = $_POST['action'] ?? '';
+
+        if ($action !== '') {
+            verifyCsrfToken($_POST['csrf_token'] ?? null);
+        }
 
         switch ($action) {
             case 'add_establishment':
@@ -74,28 +82,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('Le nom de la personnalité est obligatoire.');
                 }
 
-                $candidates = $wikipedia->searchPeople($name);
+                try {
+                    $candidates = $wikipedia->searchPeople($name);
+                } catch (LookupUnavailableException) {
+                    $repository->createVisit($name, null, $visitedOn, $establishmentId);
+                    flash('success', 'Visite enregistrée sans enrichissement automatique, car Wikipédia/Wikidata est indisponible.');
+                    redirect('?page=preload');
+                }
 
                 if (count($candidates) === 0) {
                     $repository->createVisit($name, null, $visitedOn, $establishmentId);
                     flash('success', 'Visite enregistrée sans correspondance Wikipédia. Vous pourrez la compléter depuis le préchargement.');
                     redirect('?page=preload');
-                }
-
-                if (count($candidates) === 1) {
+                } elseif (count($candidates) === 1) {
                     $personId = $repository->upsertPerson($candidates[0]);
                     $repository->createVisit($name, $personId, $visitedOn, $establishmentId);
                     flash('success', 'Visite enregistrée.');
                     redirect('?page=visits');
+                } else {
+                    $page = 'new-visit';
+                    $candidateSelection = [
+                        'visitor_name' => $name,
+                        'visited_on' => $visitedOn ?? date('Y-m-d'),
+                        'establishment_id' => $establishmentId,
+                        'candidates' => $candidates,
+                    ];
                 }
-
-                $page = 'new-visit';
-                $candidateSelection = [
-                    'visitor_name' => $name,
-                    'visited_on' => $visitedOn ?? date('Y-m-d'),
-                    'establishment_id' => $establishmentId,
-                    'candidates' => $candidates,
-                ];
                 break;
 
             case 'save_visit_person':
@@ -159,6 +171,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('Choisissez un fichier à importer.');
                 }
 
+                validateImportFile(
+                    (string) $_FILES['visitors_file']['tmp_name'],
+                    (string) ($_FILES['visitors_file']['name'] ?? '')
+                );
                 $result = importVisitors($_FILES['visitors_file']['tmp_name'], $repository, $wikipedia);
                 $message = sprintf(
                     'Import terminé : %d ligne(s), %d visite(s) résolue(s), %d à compléter.',
@@ -209,9 +225,6 @@ if ($page === 'preload' && isset($_GET['resolve'])) {
 }
 
 $title = 'Hall of Fame';
-$content = '';
-
-ob_start();
 ?>
 <!doctype html>
 <html lang="fr">
@@ -304,6 +317,7 @@ ob_start();
             <h2>Nouvelle visite</h2>
             <form method="post" class="stack">
                 <input type="hidden" name="action" value="search_visit_person">
+                <?= csrfField() ?>
                 <div class="row">
                     <label>Nom de la personnalité
                         <input type="text" name="visitor_name" required value="<?= h((string) ($candidateSelection['visitor_name'] ?? '')) ?>">
@@ -331,6 +345,7 @@ ob_start();
                 <h2>Choisir la bonne personnalité</h2>
                 <form method="post" class="stack">
                     <input type="hidden" name="action" value="save_visit_person">
+                    <?= csrfField() ?>
                     <input type="hidden" name="visitor_name" value="<?= h((string) $candidateSelection['visitor_name']) ?>">
                     <input type="hidden" name="visited_on" value="<?= h((string) $candidateSelection['visited_on']) ?>">
                     <input type="hidden" name="establishment_id" value="<?= h((string) ($candidateSelection['establishment_id'] ?? '')) ?>">
@@ -351,6 +366,7 @@ ob_start();
             <h2>Établissements</h2>
             <form method="post" class="row">
                 <input type="hidden" name="action" value="add_establishment">
+                <?= csrfField() ?>
                 <label>Nom
                     <input type="text" name="name" required>
                 </label>
@@ -373,6 +389,7 @@ ob_start();
                         <td>
                             <form method="post" class="row">
                                 <input type="hidden" name="action" value="update_establishment">
+                                <?= csrfField() ?>
                                 <input type="hidden" name="id" value="<?= h((string) $establishment['id']) ?>">
                                 <input type="text" name="name" value="<?= h((string) $establishment['name']) ?>" required>
                                 <button type="submit">Renommer</button>
@@ -381,6 +398,7 @@ ob_start();
                         <td>
                             <form method="post" class="inline">
                                 <input type="hidden" name="action" value="delete_establishment">
+                                <?= csrfField() ?>
                                 <input type="hidden" name="id" value="<?= h((string) $establishment['id']) ?>">
                                 <button type="submit" class="secondary">Supprimer</button>
                             </form>
@@ -399,6 +417,7 @@ ob_start();
             <p>Chargez un fichier texte, CSV ou une colonne de noms. Chaque ligne crée une visite sans date ni établissement si ces données ne sont pas connues.</p>
             <form method="post" enctype="multipart/form-data" class="stack">
                 <input type="hidden" name="action" value="import_visitors">
+                <?= csrfField() ?>
                 <label>Fichier à importer
                     <input type="file" name="visitors_file" required>
                 </label>
@@ -434,6 +453,7 @@ ob_start();
                         <td>
                             <form method="post" class="stack">
                                 <input type="hidden" name="action" value="update_visit">
+                                <?= csrfField() ?>
                                 <input type="hidden" name="visit_id" value="<?= h((string) $visit['id']) ?>">
                                 <input type="date" name="visited_on" value="<?= h((string) ($visit['visited_on'] ?? '')) ?>">
                                 <select name="establishment_id">
@@ -459,6 +479,7 @@ ob_start();
                                 <?php else: ?>
                                     <form method="post" class="stack">
                                         <input type="hidden" name="action" value="resolve_visit_person">
+                                        <?= csrfField() ?>
                                         <input type="hidden" name="visit_id" value="<?= h((string) $visit['id']) ?>">
                                         <?php foreach ($candidateSelection['candidates'] as $index => $candidate): ?>
                                             <label class="choice">
@@ -486,10 +507,6 @@ ob_start();
 </body>
 </html>
 <?php
-$content = (string) ob_get_clean();
-
-echo $content;
-
 function h(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -550,6 +567,18 @@ function flash(string $type, string $message): void
     $_SESSION['flash'] = ['type' => $type, 'message' => $message];
 }
 
+function csrfField(): string
+{
+    return '<input type="hidden" name="csrf_token" value="' . h((string) $_SESSION['csrf_token']) . '">';
+}
+
+function verifyCsrfToken(mixed $token): void
+{
+    if (!is_string($token) || !hash_equals((string) $_SESSION['csrf_token'], $token)) {
+        throw new RuntimeException('Jeton CSRF invalide.');
+    }
+}
+
 function consumeFlash(): ?array
 {
     if (!isset($_SESSION['flash']) || !is_array($_SESSION['flash'])) {
@@ -564,8 +593,44 @@ function consumeFlash(): ?array
 
 function redirect(string $location): never
 {
+    if (!preg_match('/^(?:\?(?!\/)|\/(?!\/))/', $location)) {
+        throw new RuntimeException('Redirection invalide.');
+    }
+
     header('Location: ' . $location);
     exit;
+}
+
+function validateImportFile(string $path, string $originalName): void
+{
+    $allowedMimeTypes = [
+        'text/plain',
+        'text/csv',
+        'application/csv',
+        'application/vnd.ms-excel',
+    ];
+    $allowedExtensions = ['txt', 'csv'];
+    $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+    $mimeType = null;
+
+    if (function_exists('finfo_open')) {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        if ($finfo !== false) {
+            $mimeType = finfo_file($finfo, $path) ?: null;
+            finfo_close($finfo);
+        }
+    }
+
+    if ($mimeType === null && function_exists('mime_content_type')) {
+        $mimeType = mime_content_type($path) ?: null;
+    }
+
+    $extensionIsValid = $extension !== '' && in_array($extension, $allowedExtensions, true);
+    $mimeTypeIsValid = $mimeType === null || in_array($mimeType, $allowedMimeTypes, true);
+
+    if (!$extensionIsValid || !$mimeTypeIsValid) {
+        throw new RuntimeException('Le fichier d’import doit être un texte brut ou un CSV.');
+    }
 }
 
 function importVisitors(string $path, Repository $repository, WikipediaClient $wikipedia): array

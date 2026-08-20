@@ -10,14 +10,8 @@ final class Repository
 
     public function listVisits(string $sort): array
     {
-        $orderBy = match ($sort) {
-            'name' => 'display_name ASC, visits.created_at DESC',
-            'establishment' => 'establishment_name IS NULL, establishment_name ASC, display_name ASC',
-            default => 'visited_on IS NULL, visits.visited_on DESC, display_name ASC',
-        };
-
-        $statement = $this->pdo->query(
-            "SELECT
+        $sql = match ($sort) {
+            'name' => 'SELECT
                 visits.id,
                 visits.visitor_name,
                 visits.visited_on,
@@ -32,8 +26,41 @@ final class Repository
             FROM visits
             LEFT JOIN people ON people.id = visits.person_id
             LEFT JOIN establishments ON establishments.id = visits.establishment_id
-            ORDER BY {$orderBy}"
-        );
+            ORDER BY display_name ASC, visits.created_at DESC',
+            'establishment' => 'SELECT
+                visits.id,
+                visits.visitor_name,
+                visits.visited_on,
+                visits.created_at,
+                visits.person_id,
+                visits.establishment_id,
+                COALESCE(people.name, visits.visitor_name) AS display_name,
+                people.profession,
+                people.photo_url,
+                people.birth_date,
+                establishments.name AS establishment_name
+            FROM visits
+            LEFT JOIN people ON people.id = visits.person_id
+            LEFT JOIN establishments ON establishments.id = visits.establishment_id
+            ORDER BY establishment_name IS NULL, establishment_name ASC, display_name ASC',
+            default => 'SELECT
+                visits.id,
+                visits.visitor_name,
+                visits.visited_on,
+                visits.created_at,
+                visits.person_id,
+                visits.establishment_id,
+                COALESCE(people.name, visits.visitor_name) AS display_name,
+                people.profession,
+                people.photo_url,
+                people.birth_date,
+                establishments.name AS establishment_name
+            FROM visits
+            LEFT JOIN people ON people.id = visits.person_id
+            LEFT JOIN establishments ON establishments.id = visits.establishment_id
+            ORDER BY visited_on IS NULL, visits.visited_on DESC, display_name ASC',
+        };
+        $statement = $this->pdo->query($sql);
 
         return $statement->fetchAll();
     }

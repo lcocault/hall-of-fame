@@ -107,6 +107,11 @@ final class WikipediaClient
     {
         if (function_exists('curl_init')) {
             $curl = curl_init($url);
+
+            if ($curl === false) {
+                return null;
+            }
+
             curl_setopt_array($curl, [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_FOLLOWLOCATION => true,
@@ -124,6 +129,8 @@ final class WikipediaClient
 
                 return is_array($decoded) ? $decoded : null;
             }
+
+            return null;
         }
 
         $context = stream_context_create([

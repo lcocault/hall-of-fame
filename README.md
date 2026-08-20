@@ -16,7 +16,7 @@ Application PHP légère pour gérer la liste des personnalités ayant visité l
 L’application démarre sans dépendance externe.
 
 ```bash
-php -S 127.0.0.1:8000 -t /home/runner/work/hall-of-fame/hall-of-fame
+php -S 127.0.0.1:8000 -t .
 ```
 
 Par défaut, une base SQLite locale est créée dans `var/hall-of-fame.sqlite` pour faciliter les essais.
