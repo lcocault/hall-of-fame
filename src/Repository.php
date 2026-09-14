@@ -228,6 +228,12 @@ final class Repository
         ]);
     }
 
+    public function deleteVisit(int $id): void
+    {
+        $statement = $this->pdo->prepare('DELETE FROM visits WHERE id = :id');
+        $statement->execute(['id' => $id]);
+    }
+
     public function resolveVisit(int $visitId, int $personId): void
     {
         $statement = $this->pdo->prepare(
