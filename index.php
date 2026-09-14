@@ -146,6 +146,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 redirect('?page=preload');
                 break;
 
+            case 'delete_visit':
+                $visitId = (int) ($_POST['visit_id'] ?? 0);
+                if ($visitId < 1) {
+                    throw new RuntimeException('Visite introuvable.');
+                }
+                $repository->deleteVisit($visitId);
+                flash('success', 'Visite supprimée.');
+                redirect('?page=visits');
+                break;
+
             case 'resolve_visit_person':
                 $visitId = (int) ($_POST['visit_id'] ?? 0);
                 $wikidataId = trim((string) ($_POST['wikidata_id'] ?? ''));
@@ -303,6 +313,12 @@ $title = 'Hall of Fame';
                             <span class="badge">Visite : <?= h(formatDate($visit['visited_on'] ?? null)) ?></span>
                             <span class="badge">Établissement : <?= h((string) ($visit['establishment_name'] ?? 'À renseigner')) ?></span>
                         </div>
+                        <form method="post" class="inline" style="margin-top:.75rem">
+                            <input type="hidden" name="action" value="delete_visit">
+                            <?= csrfField() ?>
+                            <input type="hidden" name="visit_id" value="<?= h((string) $visit['id']) ?>">
+                            <button type="submit" class="secondary">Supprimer la visite</button>
+                        </form>
                     </div>
                 </article>
             <?php endforeach; ?>
